@@ -1,3 +1,7 @@
+# CodeGraph MCP local index (regenerated on each session)
+.codegraph/
+.idea
+
 # Dependencies
 node_modules/
 
