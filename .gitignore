@@ -132,7 +132,3 @@ coverage/
 
 # Local project docs (generated, not for VCS)
 .local-docs/
-
-# CodeGraph MCP local index (regenerated on each session)
-.codegraph/
-.idea
