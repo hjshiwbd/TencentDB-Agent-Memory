@@ -8,6 +8,7 @@ import type { Context } from "hono";
 /** Extract conversation ID from request headers. Returns null if no valid ID found. */
 export function resolveConversationId(c: Context): string | null {
   const id =
+    c.req.header("x-mavis-session-id")??
     c.req.header("x-conversation-id") ??
     c.req.header("x-session-id") ??
     c.req.header("x-claude-code-session-id") ?? // Claude Code CLI sends this
