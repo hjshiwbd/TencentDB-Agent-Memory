@@ -4,6 +4,8 @@ git remote -v   # 确认:应看到 origin + upstream 两行
 
 # === 2. 拉 upstream ===
 git fetch upstream
+# 当前分支拉到最新
+git pull
 
 # === 3. 看 upstream 都有什么分支(决定 merge 哪个) ===
 git branch -r | grep '^  upstream/'
