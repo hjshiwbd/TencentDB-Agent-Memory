@@ -5,7 +5,9 @@ module.exports = {
     script: 'src/index.ts',
     interpreter: '/root/.nvm/versions/node/v22.23.2/bin/node',
     node_args: '--import tsx/esm',
-    args: '--config ./config.yaml',
+    // 用 start-proxy.sh 生成的 config (deploy/global-images/.proxy-config/config.yaml),
+    // 跟着 .env 自动刷新, 不再各自维护两份。
+    args: '--config /data/git/TencentDB-Agent-Memory/deploy/global-images/.proxy-config/config.yaml',
     cwd: '/data/git/TencentDB-Agent-Memory/MemoryProxy',
     autorestart: true,
     max_restarts: 10,
