@@ -19,7 +19,7 @@ git status
 # 看完:不想继续 → git merge --abort
 
 # === 6. 真正 merge(写历史) ===
-git merge --no-ff upstream/feat/server_team
+git merge upstream/feat/server_team
 
 # === 7. 有冲突时 ===
 # 1) 打开冲突文件,搜 <<<<<<< 标记
