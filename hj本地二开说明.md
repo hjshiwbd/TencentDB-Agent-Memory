@@ -1,4 +1,28 @@
-# 二开说明
+# 新版
+```shell
+# 正常重启, 停止
+./stop-all.sh
+
+#启动
+./start-all.sh
+#或者
+PULL=1; ./start-all.sh
+
+#把要改的拿出来
+docker cp tdai-proxy:/app/src/session/session-key.ts /data/session-key.ts
+
+#修改
+vim /data/session-key.ts
+
+#覆盖回去
+docker cp /data/session-key.ts tdai-proxy:/app/src/session/session-key.ts
+
+#重启
+docker restart tdai-proxy
+
+```
+
+# 二开说明(老版,暂不用了)
 - 本地agent=mavis, 项目不支持
 - 改代码, memoryproxy里的session-key.ts里加了一行`c.req.header("x-mavis-session-id")??`
 - 运行前, 先手动关闭pm2 stop 0
