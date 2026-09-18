@@ -11,7 +11,7 @@ PULL=1; ./start-all.sh
 #把要改的拿出来
 docker cp tdai-proxy:/app/src/session/session-key.ts /data/session-key.ts
 
-#修改
+#修改, 加一行: c.req.header("x-mavis-session-id") ??
 vim /data/session-key.ts
 
 #覆盖回去
