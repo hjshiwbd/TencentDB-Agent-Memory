@@ -8,6 +8,9 @@
 #或者
 PULL=1; ./start-all.sh
 
+#查看docker内待修改文件内容
+docker exec tdai-proxy cat /app/src/session/session-key.ts
+
 #把要改的拿出来
 docker cp tdai-proxy:/app/src/session/session-key.ts /data/session-key.ts
 
