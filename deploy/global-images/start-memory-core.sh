@@ -223,6 +223,8 @@ ${PERSONA_TRIGGER_YAML}
 # ── Skill 模块 ──
 skill:
   enabled: true
+  worker:
+    concurrency: 1
   routing:
     mode: bm25
     searchTopK: 20
