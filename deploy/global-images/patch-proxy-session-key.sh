@@ -5,12 +5,19 @@
 # 没有 dist 产物），所以改 /app/src/session/session-key.ts 再 restart 即刻生效。
 #
 #   原始：
-#     const id =
-#       c.req.header("x-conversation-id") ??
+#     const SESSION_HEADER_PRIORITY = [
+#       "x-parent-conversation-id",
+#       "x-conversation-id",
+#       ...
 #   改成：
-#     const id =
-#       c.req.header("x-mavis-session-id") ??
-#       c.req.header("x-conversation-id") ??
+#     const SESSION_HEADER_PRIORITY = [
+#       "x-mavis-session-id",
+#       "x-parent-conversation-id",
+#       "x-conversation-id",
+#       ...
+#
+# 插入位置：默认插在数组**第一项之前**，即新 header 优先级最高。
+# 需要插在别的 header 之前时用 --anchor-header <name>（或 PROXY_ANCHOR_HEADER）。
 #
 # 实现：容器里没有 vim/python（只有 sh/sed/awk/perl/node），且镜像里的文件属主是
 # app(10001) 而容器进程也跑在 app 上 —— 但被 docker cp 覆盖过的文件会变成 root:root
@@ -21,13 +28,15 @@
 #   ./patch-proxy-session-key.sh                 # 打补丁 + 重启 + 等健康
 #   ./patch-proxy-session-key.sh --dry-run       # 只看 diff，不落盘不重启
 #   ./patch-proxy-session-key.sh --status        # 只看当前是否已打补丁
+#   ./patch-proxy-session-key.sh --anchor-header x-conversation-id
+#                                            # 改插在指定 header 之前（默认插第一项之前）
 #   ./patch-proxy-session-key.sh --commit-image agentmemory/memory-proxy:patched
 #                                            # 顺手 commit 成镜像，避免重建容器后丢
 #
 # ⚠️ 容器可写层的修改只扛得住 `docker restart`；`start-proxy.sh` 会
 #    rm_container_if_exists + docker run 重建容器，改动就没了。
 #    要长期生效请用 --commit-image，或直接改宿主机源码 MemoryProxy/src/session/
-#    session-key.ts 后重新 build 镜像（仓库里那行已经加好了）。
+#    session-key.ts 后重新 build 镜像。
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,7 +46,7 @@ source "$SCRIPT_DIR/_lib.sh"
 CONTAINER="${PROXY_CONTAINER:-tdai-proxy}"
 REMOTE_PATH="${PROXY_SESSION_KEY_PATH:-/app/src/session/session-key.ts}"
 NEW_HEADER="${PROXY_NEW_HEADER:-x-mavis-session-id}"
-ANCHOR_HEADER="${PROXY_ANCHOR_HEADER:-x-conversation-id}"
+ANCHOR_HEADER="${PROXY_ANCHOR_HEADER:-none}"
 
 DO_RESTART=1
 RESTART_ALWAYS=0
@@ -47,7 +56,7 @@ COMMIT_TAG=""
 WAIT_SECONDS=90
 
 usage() {
-  sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,39p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -79,7 +88,7 @@ if (( STATUS_ONLY )); then
   if $DOCKER exec "$CONTAINER" cat "$REMOTE_PATH" 2>/dev/null | grep -q "\"${NEW_HEADER}\""; then
     ok "已包含 $NEW_HEADER"
     $DOCKER exec "$CONTAINER" sh -c \
-      "grep -n -A1 'const id =' '$REMOTE_PATH' | head -4"
+      "sed -n '/const SESSION_HEADER_PRIORITY/,/]/p' '$REMOTE_PATH'"
     exit 0
   else
     warn "尚未包含 $NEW_HEADER（需要打补丁）"
@@ -109,7 +118,8 @@ if grep -q "\"${NEW_HEADER}\"" "$SRC"; then
     warn "已包含 $NEW_HEADER，仍按 --restart-always 强制走一遍（补丁不会重复插入）"
   else
     ok "已包含 $NEW_HEADER，无需改动"
-    $DOCKER exec "$CONTAINER" sh -c "grep -n -B1 -A2 'const id =' '$REMOTE_PATH' | head -6"
+    $DOCKER exec "$CONTAINER" sh -c \
+      "sed -n '/const SESSION_HEADER_PRIORITY/,/]/p' '$REMOTE_PATH'"
     if (( DO_RESTART )); then
       info "重启 $CONTAINER（文件已符合预期）"
       $DOCKER restart "$CONTAINER" >/dev/null
@@ -121,37 +131,39 @@ if grep -q "\"${NEW_HEADER}\"" "$SRC"; then
 fi
 
 # ── 4. 打补丁 ─────────────────────────────────────────────────────────────
-# 在 `const id =` 块里、anchor header（x-conversation-id）那一行之前插入一行，
-# 缩进跟随 anchor 行；若 `const id =` 与 anchor 同行，则插在它后面。
+# 在 `const SESSION_HEADER_PRIORITY = [` 数组里、anchor header（默认
+# x-conversation-id）那一项之前插入一行 `"<new header>",`。
+# 数组里找不到 anchor 时，插在数组第一项之前。
 set +e
 awk -v NEWTEXT="$NEW_LINE_TEXT" -v ANCHOR="\"$ANCHOR_HEADER\"" '
-  BEGIN { inblock = 0; found_block = 0; inserted = 0 }
-  {
-    if (!inblock && $0 ~ /^[ \t]*const[ \t]+id[ \t]*=/) {
-      inblock = 1; found_block = 1
-      print
-      if (index($0, ANCHOR) > 0) {          # const id = c.req.header("x-...") 同行
-        match($0, /^[ \t]*/)
-        print substr($0, 1, RLENGTH) NEWTEXT
-        inserted = 1
-      }
-      next
-    }
-    if (inblock) {
-      if (index($0, ANCHOR) > 0 && !inserted) {
-        match($0, /^[ \t]*/)
-        print substr($0, 1, RLENGTH) NEWTEXT
-        inserted = 1
-      }
-      print
-      if ($0 ~ /^[ \t]*;/) inblock = 0         # 表达式结束
-      next
-    }
-    print
-  }
+  { L[NR] = $0 }
   END {
-    if (!found_block) exit 3
-    if (!inserted)   exit 4
+    start = 0; end = 0
+    for (i = 1; i <= NR; i++) {
+      if (start == 0 && L[i] ~ /const[ \t]+SESSION_HEADER_PRIORITY[ \t]*=[ \t]*\[/) start = i
+      else if (start > 0 && L[i] ~ /\]/) { end = i; break }
+    }
+    if (start == 0 || end == 0) exit 3
+
+    target = 0; first = 0
+    for (i = start + 1; i < end; i++) {
+      if (L[i] ~ /^[ \t]*"[^"]+"[ \t]*,?[ \t]*$/) {
+        if (target == 0) {
+          if (index(L[i], ANCHOR) > 0) target = i
+          else if (first == 0) first = i
+        }
+      }
+    }
+    if (target == 0) target = first      # 数组里没有 anchor，退回插在第一项之前
+    if (target == 0) exit 4
+
+    for (i = 1; i <= NR; i++) {
+      if (i == target) {
+        match(L[i], /^[ \t]*/)
+        print substr(L[i], 1, RLENGTH) NEWTEXT
+      }
+      print L[i]
+    }
   }
 ' "$SRC" > "$OUT"
 AWK_RC=$?
@@ -159,30 +171,36 @@ set -e
 
 case "$AWK_RC" in
   0) : ;;
-  3) die "在 $CONTAINER:$REMOTE_PATH 里找不到 'const id =' 语句，文件结构与预期不符。上下文：
-$(grep -n -m1 -B2 -A6 'conversation' "$SRC" || echo '(文件里没有 conversation 相关行)')" ;;
-  4) die "找到了 'const id =' 块，但块内没有 anchor header \"$ANCHOR_HEADER\"。上下文：
-$(sed -n '1,5p' "$SRC")" ;;
+  3) die "在 $CONTAINER:$REMOTE_PATH 里找不到 SESSION_HEADER_PRIORITY 数组，文件结构与预期不符。上下文：
+$(grep -n -m1 -B2 -A8 'SESSION_HEADER_PRIORITY' "$SRC" || echo '(文件里没有 SESSION_HEADER_PRIORITY)')" ;;
+  4) die "在 SESSION_HEADER_PRIORITY 数组里找不到可插入的元素行。上下文：
+$(sed -n '/SESSION_HEADER_PRIORITY/,/]/p' "$SRC")" ;;
   *) die "awk 打补丁失败（exit=$AWK_RC）。" ;;
 esac
 
 # 结构自检：新行必须恰好出现一次，且 anchor 紧跟其后
 [[ "$(grep -c -F "\"${NEW_HEADER}\"" "$OUT")" -eq 1 ]] \
   || die "补丁自检失败：$NEW_HEADER 行数不是 1。"
-awk -v NEW="\"$NEW_HEADER\"" '
+awk -v NEW="\"$NEW_HEADER\"" -v ANCHOR="\"$ANCHOR_HEADER\"" '
   { L[NR] = $0 }
   END {
+    start = 0; end = 0
     for (i = 1; i <= NR; i++) {
-      if (index(L[i], NEW) > 0) {
-        if (i + 1 > NR || index(L[i + 1], "x-conversation-id") == 0) {
-          print "anchor 未紧跟新行"; exit 5
-        }
-        exit 0
-      }
+      if (start == 0 && L[i] ~ /const[ \t]+SESSION_HEADER_PRIORITY[ \t]*=[ \t]*\[/) start = i
+      else if (start > 0 && L[i] ~ /\]/) { end = i; break }
     }
-    print "找不到新行"; exit 5
+    if (start == 0 || end == 0) { print "找不到 SESSION_HEADER_PRIORITY 数组"; exit 5 }
+
+    new_line = 0; anchor_line = 0
+    for (i = start + 1; i < end; i++) {
+      if (new_line == 0 && index(L[i], NEW) > 0) new_line = i
+      if (anchor_line == 0 && index(L[i], ANCHOR) > 0) anchor_line = i
+    }
+    if (new_line == 0) { print "新行不在数组内"; exit 5 }
+    if (anchor_line > 0 && new_line > anchor_line) { print "新行在 anchor 之后"; exit 5 }
+    exit 0
   }
-' "$OUT" || die "补丁自检失败：$NEW_HEADER 行后面不是 $ANCHOR_HEADER 行。"
+' "$OUT" || die "补丁自检失败：$NEW_HEADER 不在数组内，或排在了 $ANCHOR_HEADER 之后。"
 
 info "补丁 diff："
 diff -u --label "容器内(改前)" "$BAK" --label "容器内(改后)" "$OUT" || true
@@ -225,7 +243,7 @@ else
   info "--no-restart：跳过重启"
 fi
 
-FINAL="$($DOCKER exec "$CONTAINER" sed -n '/const id =/,/;/p' "$REMOTE_PATH")"
+FINAL="$($DOCKER exec "$CONTAINER" sed -n '/const SESSION_HEADER_PRIORITY/,/]/p' "$REMOTE_PATH")"
 echo "$FINAL" | grep -q "\"${NEW_HEADER}\"" || die "复核失败：重启后 $REMOTE_PATH 里没有 $NEW_HEADER"
-info "复核通过，当前生效代码："
+info "复核通过，当前生效的 header 优先级："
 echo "$FINAL" | sed 's/^/    /'
