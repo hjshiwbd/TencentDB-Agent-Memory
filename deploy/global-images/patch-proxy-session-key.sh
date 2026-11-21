@@ -81,7 +81,7 @@ DOCKER="$(find_docker)"
 $DOCKER ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER" \
   || die "容器 $CONTAINER 不存在。先用 ./start-proxy.sh 拉起来。"
 
-NEW_LINE_TEXT="c.req.header(\"${NEW_HEADER}\") ??"
+NEW_LINE_TEXT="\"${NEW_HEADER}\","
 
 if (( STATUS_ONLY )); then
   info "当前 $CONTAINER:$REMOTE_PATH 状态："
